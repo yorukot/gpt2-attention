@@ -20,9 +20,18 @@ Reproduce and extend the surface-level analyses in Sections 3.1 through 3.3 of C
 
 - Measure how much attention each head assigns to the current token, the previous token, and several earlier positions.
 - Compare focused and broad attention heads using attention entropy.
-- Investigate which heads assign the most attention to GPT-2's `<|endoftext|>` token and compare this behavior with BERT's attention to `[SEP]` and `[CLS]`.
+- ~~Investigate which heads assign the most attention to GPT-2's `<|endoftext|>` token and compare this behavior with BERT's attention to `[SEP]` and `[CLS]`.~~
 
-These are two separate comparisons. GPT-2 cannot attend to future tokens, so the next-token pattern from Section 3.1 is impossible and should simply be discussed as an architectural difference. The `<|endoftext|>` analysis instead adapts the special-token experiment from Section 3.2: investigate whether GPT-2 attends to its document-boundary token in ways resembling BERT's attention to `[SEP]` or `[CLS]`. Use examples in which `<|endoftext|>` is visible to later tokens, such as at the beginning of a passage or between two passages.
+GPT-2 cannot attend to future tokens, so the next-token pattern from Section 3.1 is impossible and should simply be discussed as an architectural difference.
+
+~~The `<|endoftext|>` analysis instead adapts the special-token experiment from Section 3.2: investigate whether GPT-2 attends to its document-boundary token in ways resembling BERT's attention to `[SEP]` or `[CLS]`. Use examples in which `<|endoftext|>` is visible to later tokens, such as at the beginning of a passage or between two passages.~~
+
+#### Update October 1, 2026
+
+Since GPT-2's EOS token doesn't appear until the end of text, it is likely OOD if we use it like BERT's `[SEP]` or `[CLS]`. To this end, we redesign this lab to ask these two questions:
+
+- The original paper formulates `[SEP]` as a no-op token. If GPT-2 sequences don't see any tokens that don't have meaning, does the no-op behavior exist in GPT-2? (For example, potential no-op tokens would be stop words such as "the", "a", or punctuation such as "," and ".".)
+- **(Optional)** If the no-op behavior doesn't occur in GPT-2, does GPT-2 still have specialized heads? You may choose to skip the investigation of this question as it refers to content in Section 4.
 
 ### Clustering attention heads
 
