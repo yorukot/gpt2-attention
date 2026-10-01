@@ -1,3 +1,4 @@
+import argparse
 import math
 
 import torch
@@ -10,29 +11,15 @@ model_name = "openai-community/gpt2"
 
 
 @torch.inference_mode()
-def gpt2_attention(text: str) -> tuple[torch.Tensor, torch.Tensor]:
-    """Run one text passage through the 12 pretrained GPT-2 Small layers.
-
-    Return logits shaped (tokens, 50257) and attention weights shaped
-    (layers=12, heads=12, tokens, tokens). This runs a single forward pass;
-    it does not generate text.
-    """
+def gpt2(text: str) -> torch.Tensor:
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     input_ids = tokenizer.encode(text, return_tensors="pt")
     gpt_2_checkpoint = hf_hub_download(model_name, "model.safetensors")
     weights = load_file(gpt_2_checkpoint, device="cpu")
-    logits, attentions = forward(input_ids, weights)
-    return logits[0], attentions[:, 0]
+    return forward(input_ids, weights)[0]
 
 
-def forward(
-    input_ids: torch.Tensor, weights: dict[str, torch.Tensor]
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Run unpadded token IDs shaped (batch, tokens) using already loaded weights.
-
-    Return logits (batch, tokens, vocabulary) and attention weights
-    (layers, batch, heads, tokens, tokens).
-    """
+def forward(input_ids: torch.Tensor, weights: dict[str, torch.Tensor]) -> torch.Tensor:
     batch_size, length = input_ids.shape
     max_length = weights["wpe.weight"].shape[0]
     if not 1 <= length <= max_length:
@@ -42,7 +29,6 @@ def forward(
     x = weights["wte.weight"][input_ids] + weights["wpe.weight"][positions]
 
     mask = torch.ones(length, length, dtype=torch.bool, device=input_ids.device).tril()
-    attentions = []
 
     for layer in range(12):
         prefix = f"h.{layer}"
@@ -59,7 +45,6 @@ def forward(
         scores = query @ key.transpose(-2, -1) / math.sqrt(64)
         scores = scores.masked_fill(~mask, torch.finfo(scores.dtype).min)
         probabilities = torch.softmax(scores, dim=-1)
-        attentions.append(probabilities)
         context = probabilities @ value
 
         context = context.transpose(1, 2).reshape(batch_size, length, 768)
@@ -78,7 +63,7 @@ def forward(
     x = layer_norm(x, weights, "ln_f")
 
     logits = x @ weights["wte.weight"].T
-    return logits, torch.stack(attentions)
+    return logits
 
 
 def linear(x, weights, name):
@@ -96,3 +81,28 @@ def layer_norm(x, weights, name):
         bias=weights[name + ".bias"],
         eps=1e-5,
     )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run a GPT-2 forward pass.")
+    parser.add_argument(
+        "text",
+        nargs="?",
+        default="The cat sat on the",
+        help="Input text (default: %(default)s).",
+    )
+    args = parser.parse_args()
+    if not args.text:
+        parser.error("text must not be empty")
+
+    logits = gpt2(args.text)
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    next_token_id = logits[-1].argmax().item()
+    next_token = tokenizer.decode([next_token_id])
+
+    print(f"Input: {args.text}")
+    print(f"Next token: {next_token!r}")
+
+
+if __name__ == "__main__":
+    main()
