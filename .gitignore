@@ -1,0 +1,48 @@
+# Python environments, bytecode, and packaging
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Tool and notebook caches
+.cache/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Local credentials and settings
+.env
+.env.*
+!.env.example
+
+# Downloaded datasets, models, and generated experiment artifacts
+/data/
+/models/
+/checkpoints/
+/outputs/
+/runs/
+/wandb/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.log
+
+# Editors and OS metadata
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Keep uv.lock, notebooks, and report figures under version control.

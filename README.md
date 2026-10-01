@@ -43,3 +43,45 @@ Submit your code and report in the form of a GitHub repository. Send the reposit
 ## References
 
 [1] Kevin Clark, Urvashi Khandelwal, Omer Levy, and Christopher Manning. What Does BERT Look At? An Analysis of BERT's Attention, 2019.
+
+## Python environment
+
+The project uses Python 3.13 and [uv](https://docs.astral.sh/uv/). Install the
+locked dependencies into the local `.venv`:
+
+```bash
+uv sync --locked
+```
+
+Run scripts and notebooks in that environment:
+
+```bash
+uv run python your_script.py
+uv run jupyter lab
+```
+
+The environment includes:
+
+- **Models and data:** PyTorch, Transformers, Datasets, Hugging Face Hub,
+  Tokenizers, Safetensors, and Accelerate.
+- **Attention analysis:** NumPy, SciPy (entropy and Jensen-Shannon distance),
+  scikit-learn (multidimensional scaling and clustering), pandas, and einops.
+- **Figures and progress:** Matplotlib, Seaborn, and tqdm.
+- **Development and notebooks:** JupyterLab, ipykernel, ipywidgets, pytest, and
+  Ruff. These are in the `dev` dependency group, installed by default.
+
+PyTorch is configured to use CPU wheels on Linux and Windows, with PyPI wheels
+on macOS. For an NVIDIA GPU, update the PyTorch index in `pyproject.toml` to
+match the driver and accelerator, then run `uv lock` and `uv sync`. See
+[uv's PyTorch guide](https://docs.astral.sh/uv/guides/integration/pytorch/).
+
+When extracting attention weights with Transformers, load GPT-2 with
+`attn_implementation="eager"`, use `model.eval()`, and pass
+`output_attentions=True` during inference. This makes the attention matrices
+available for the analyses in this brief. See the
+[Hugging Face GPT-2 documentation](https://huggingface.co/docs/transformers/en/model_doc/gpt2).
+
+Keep `uv.lock` in Git so both partners use the same dependency versions. The
+`.gitignore` excludes virtual environments, caches, local `.env` files,
+downloaded data/model directories, and experiment outputs. Save figures needed
+for the report outside the ignored directories, for example in `report/figures/`.
