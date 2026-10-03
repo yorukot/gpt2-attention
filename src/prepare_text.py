@@ -1,68 +1,15 @@
-"""Extract readable passages and conservative sentence candidates from BERT data.
-
-Usage: python src/prepare_text.py data/raw/bert_attention.pkl
-
-The source is a protocol-2 pickle of token lists and NumPy attention arrays.
-Read its opcodes without unpickling objects, and seek past the array payloads.
-Sentence splitting is heuristic: the source has already lost casing, spacing,
-and some sentence boundaries. All segments are retained in passages.txt.
-"""
-
-import argparse
-import hashlib
-import json
 import pickletools
 import re
-from collections import Counter
 from collections.abc import Iterator
 from pathlib import Path
+from typing import cast
 
-ABBREVIATIONS = {
-    "mr",
-    "mrs",
-    "ms",
-    "dr",
-    "prof",
-    "rev",
-    "st",
-    "sr",
-    "jr",
-    "vs",
-    "etc",
-    "fig",
-    "no",
-    "vol",
-    "pp",
-    "ed",
-    "eds",
-    "inc",
-    "ltd",
-    "co",
-    "approx",
-    "jan",
-    "feb",
-    "mar",
-    "apr",
-    "jun",
-    "jul",
-    "aug",
-    "sep",
-    "sept",
-    "oct",
-    "nov",
-    "dec",
-    "dept",
-    "gen",
-    "col",
-    "lt",
-    "capt",
-    "sgt",
-    "mt",
-}
+SOURCE = Path("data/raw/bert_attention.pkl")
+OUTPUT = Path("data/passages.txt")
+OPCODES = {opcode.code: opcode for opcode in pickletools.opcodes}
 
 
 def read_tokens(path: Path) -> Iterator[list[str]]:
-    """Read this dataset's token lists without executing pickle instructions."""
     memo: dict[int, str] = {}
     last_string = None
     expecting_list = False
@@ -70,10 +17,11 @@ def read_tokens(path: Path) -> Iterator[list[str]]:
     size = path.stat().st_size
 
     with path.open("rb") as source:
+        # check weather the file format is a protocol-2 BERT attention pickle
         if source.read(2) != b"\x80\x02":
             raise ValueError("Expected a protocol-2 BERT attention pickle.")
         while code := source.read(1):
-            opcode = pickletools.code2op[code.decode("latin1")]
+            opcode = OPCODES[code.decode("latin1")]
             name = opcode.name
             if name == "BINSTRING":
                 # NumPy's raw attention data: skip gigabytes of unused values.
@@ -90,7 +38,7 @@ def read_tokens(path: Path) -> Iterator[list[str]]:
 
             if name in {"BINPUT", "LONG_BINPUT"}:
                 if last_string is not None:
-                    memo[argument] = last_string
+                    memo[cast(int, argument)] = last_string
                 else:
                     memo.pop(argument, None)
                 continue
@@ -171,144 +119,21 @@ def detokenize(words: list[str]) -> str:
     return " ".join(text.split())
 
 
-def sentence_chunks(words: list[str]) -> Iterator[tuple[list[str], bool]]:
-    """Yield punctuation-delimited chunks and whether each has an ending."""
-    start = 0
-    index = 0
-    while index < len(words):
-        token = words[index]
-        previous = words[index - 1] if index else ""
-        following = words[index + 1] if index + 1 < len(words) else ""
-        boundary = token in {".", "!", "?"}
-        if token == ".":
-            boundary = not (
-                (previous.isdigit() and following.isdigit())
-                or previous.lower() in ABBREVIATIONS
-                or (len(previous) == 1 and previous.isalpha())
-                or previous == "."
-                or following == "."
-            )
-        if boundary:
-            end = index + 1
-            while end < len(words):
-                if (
-                    words[end] in {"!", "?", ")", "]", "}"}
-                    or words[end] == '"'
-                    and words[start:end].count('"') % 2
-                ):
-                    end += 1
-                else:
-                    break
-            yield words[start:end], True
-            start = end
-            index = end
-        else:
-            index += 1
-    if start < len(words):
-        yield words[start:], False
+def prepare(source: Path, output: Path) -> int:
+    """Write one reconstructed passage per line and return the passage count."""
+    output.parent.mkdir(parents=True, exist_ok=True)
+    count = 0
+    with output.open("w", encoding="utf-8") as passages:
+        for tokens in read_tokens(source):
+            for segment in split_segments(tokens):
+                text = detokenize(merge_wordpieces(segment))
+                if text:
+                    passages.write(text + "\n")
+                    count += 1
+    return count
 
 
-def exclusion_reason(words: list[str], index: int, has_ending: bool) -> str | None:
-    if index == 0:
-        return "unverified_segment_start"
-    if not has_ending:
-        return "unfinished_segment_end"
-    if "[UNK]" in words:
-        return "unknown_token"
-    if sum(any(char.isalpha() for char in word) for word in words) < 3:
-        return "too_short"
-    if words[0] in {",", ";", ":", ")", "]", "}"}:
-        return "leading_fragment"
-    for opening, closing in (("(", ")"), ("[", "]"), ("{", "}")):
-        if words.count(opening) != words.count(closing):
-            return "unbalanced_brackets"
-    if words.count('"') % 2:
-        return "unbalanced_quotes"
-    return None
-
-
-def prepare(source: Path, output_dir: Path) -> dict:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    counts: Counter = Counter()
-    exclusions: Counter = Counter()
-    seen: set[str] = set()
-    with (
-        (output_dir / "passages.txt").open("w", encoding="utf-8") as passages,
-        (output_dir / "sentences.txt").open("w", encoding="utf-8") as sentences,
-        (output_dir / "segments.jsonl").open("w", encoding="utf-8") as records,
-    ):
-        for record_id, tokens in enumerate(read_tokens(source)):
-            counts["source_records"] += 1
-            counts["source_tokens_including_special_tokens"] += len(tokens)
-            for segment_id, segment in enumerate(split_segments(tokens)):
-                words = merge_wordpieces(segment)
-                text = detokenize(words)
-                if not text:
-                    continue
-                counts["passages"] += 1
-                passages.write(text + "\n")
-                chunks = []
-                for index, (chunk, has_ending) in enumerate(sentence_chunks(words)):
-                    sentence = detokenize(chunk)
-                    reason = exclusion_reason(chunk, index, has_ending)
-                    if reason is None and sentence in seen:
-                        reason = "duplicate_sentence"
-                    item = {"text": sentence, "excluded_reason": reason}
-                    if reason is None:
-                        seen.add(sentence)
-                        counts["sentences"] += 1
-                        item["sentence_line"] = counts["sentences"]
-                        sentences.write(sentence + "\n")
-                    else:
-                        exclusions[reason] += 1
-                    chunks.append(item)
-                record = {
-                    "record_id": record_id,
-                    "segment_id": segment_id,
-                    "passage_line": counts["passages"],
-                    "source_tokens": segment,
-                    "text": text,
-                    "chunks": chunks,
-                }
-                records.write(json.dumps(record, ensure_ascii=False) + "\n")
-
-    if not counts["source_records"]:
-        raise ValueError("No BERT records found.")
-    with source.open("rb") as handle:
-        digest = hashlib.file_digest(handle, "sha256").hexdigest()
-    summary = {
-        "source": str(source),
-        "source_bytes": source.stat().st_size,
-        "source_sha256": digest,
-        "counts": dict(counts),
-        "excluded_chunks": dict(exclusions),
-        "notes": [
-            "UTF-8 outputs use one passage or sentence candidate per line.",
-            "Passages preserve each BERT segment separately; no segments are joined.",
-            "Stop words and punctuation are retained; no EOS tokens are inserted.",
-            "WordPiece continuations are joined and punctuation spacing is repaired.",
-            "Original casing, spacing, and clipped text cannot be recovered exactly.",
-            "Sentence splitting is heuristic and does not guarantee grammatical completeness.",
-            "The first chunk of every segment is excluded because its start is uncertain.",
-            "Unfinished endings and duplicate sentence candidates are excluded.",
-            "All excluded text remains in passages.txt and segments.jsonl.",
-            "Line numbers are 1-based; record and segment IDs are 0-based.",
-        ],
-    }
-    (output_dir / "preprocessing.json").write_text(
-        json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
-    return summary
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("source", type=Path)
-    parser.add_argument("--output-dir", type=Path, default=Path("data"))
-    args = parser.parse_args()
-    summary = prepare(args.source, args.output_dir)
-    print(json.dumps(summary, indent=2, ensure_ascii=False))
-
-
+# Start the codde
 if __name__ == "__main__":
-    main()
+    count = prepare(SOURCE, OUTPUT)
+    print(f"Wrote {count} passages to {OUTPUT}.")

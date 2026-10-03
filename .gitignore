@@ -24,14 +24,15 @@ coverage.xml
 .env.*
 !.env.example
 
-# Downloaded datasets, models, and generated experiment artifacts
-/data/
+# Raw datasets, models, and generated experiment artifacts
+/data/raw/
 /models/
 /checkpoints/
 /outputs/
 /runs/
 /wandb/
 *.pt
+!/data/**/*.pt
 *.pth
 *.ckpt
 *.safetensors

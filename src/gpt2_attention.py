@@ -1,25 +1,23 @@
-import argparse
 import math
+from pathlib import Path
 
 import torch
 from huggingface_hub import hf_hub_download
 from safetensors.torch import load_file
 from torch import nn
-from transformers import AutoTokenizer
 
-model_name = "openai-community/gpt2"
+from src.data import MODEL_NAME, REVISION, load_data
 
-
-@torch.inference_mode()
-def gpt2(text: str) -> torch.Tensor:
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    input_ids = tokenizer.encode(text, return_tensors="pt")
-    gpt_2_checkpoint = hf_hub_download(model_name, "model.safetensors")
-    weights = load_file(gpt_2_checkpoint, device="cpu")
-    return forward(input_ids, weights)[0]
+OUTPUT = Path("data/attention")
+THREADS = 2
 
 
-def forward(input_ids: torch.Tensor, weights: dict[str, torch.Tensor]) -> torch.Tensor:
+def forward(
+    input_ids: torch.Tensor,
+    weights: dict[str, torch.Tensor],
+    *,
+    attention_maps: list[torch.Tensor] | None = None,
+) -> torch.Tensor:
     batch_size, length = input_ids.shape
     max_length = weights["wpe.weight"].shape[0]
     if not 1 <= length <= max_length:
@@ -37,7 +35,6 @@ def forward(input_ids: torch.Tensor, weights: dict[str, torch.Tensor]) -> torch.
         qkv = linear(normalized, weights, prefix + ".attn.c_attn")
         query, key, value = qkv.chunk(3, dim=-1)
 
-        # Split each 768-dimensional embedding into 12 heads of 64 dimensions.
         query = query.reshape(batch_size, length, 12, 64).transpose(1, 2)
         key = key.reshape(batch_size, length, 12, 64).transpose(1, 2)
         value = value.reshape(batch_size, length, 12, 64).transpose(1, 2)
@@ -45,6 +42,8 @@ def forward(input_ids: torch.Tensor, weights: dict[str, torch.Tensor]) -> torch.
         scores = query @ key.transpose(-2, -1) / math.sqrt(64)
         scores = scores.masked_fill(~mask, torch.finfo(scores.dtype).min)
         probabilities = torch.softmax(scores, dim=-1)
+        if attention_maps is not None:
+            attention_maps.append(probabilities)
         context = probabilities @ value
 
         context = context.transpose(1, 2).reshape(batch_size, length, 768)
@@ -52,7 +51,6 @@ def forward(input_ids: torch.Tensor, weights: dict[str, torch.Tensor]) -> torch.
 
         normalized = layer_norm(x, weights, prefix + ".ln_2")
         hidden = linear(normalized, weights, prefix + ".mlp.c_fc")
-        # GPT-2's approximate GELU activation.
         hidden = (
             0.5
             * hidden
@@ -83,25 +81,33 @@ def layer_norm(x, weights, name):
     )
 
 
+@torch.inference_mode()
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run a GPT-2 forward pass.")
-    parser.add_argument(
-        "text",
-        nargs="?",
-        default="The cat sat on the",
-        help="Input text (default: %(default)s).",
+    torch.set_num_threads(THREADS)
+    _, passages = load_data()
+    checkpoint = hf_hub_download(
+        MODEL_NAME, "model.safetensors", revision=REVISION, local_files_only=True
     )
-    args = parser.parse_args()
-    if not args.text:
-        parser.error("text must not be empty")
+    weights = load_file(checkpoint, device="cpu")
+    OUTPUT.mkdir(parents=True, exist_ok=True)
 
-    logits = gpt2(args.text)
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    next_token_id = logits[-1].argmax().item()
-    next_token = tokenizer.decode([next_token_id])
-
-    print(f"Input: {args.text}")
-    print(f"Next token: {next_token!r}")
+    for index, passage in enumerate(passages, 1):
+        input_ids = torch.tensor([passage["token_ids"]], dtype=torch.long)
+        maps = []
+        forward(input_ids, weights, attention_maps=maps)
+        # Remove the single-passage batch dimension: [layer, head, query, key].
+        attention = torch.stack(maps)[:, 0]
+        output = OUTPUT / f"passage_{passage['passage_line']}.pt"
+        torch.save(
+            {
+                **passage,
+                "model": MODEL_NAME,
+                "revision": REVISION,
+                "attention": attention,
+            },
+            output,
+        )
+        print(f"[{index}/{len(passages)}] Saved {output}", flush=True)
 
 
 if __name__ == "__main__":

@@ -45,6 +45,50 @@ Bring the experiments together into a broader analysis. Which findings from the 
 
 Discuss the main limits of your study. These may include the dataset, sequence length, use of only one model size, choices made when averaging attention, and the fact that attention weights alone do not prove that a head causes a model prediction.
 
+## Generating attention data
+
+First extract passages from `data/raw/bert_attention.pkl`:
+
+```bash
+uv run python -m src.prepare_text
+```
+
+This writes `data/passages.txt`, preserving each BERT segment as one passage.
+The source and output paths are constants at the top of `src/prepare_text.py`.
+
+Once `data/passages.txt` exists and the pinned GPT-2 tokenizer and weights are
+cached, generate attention data from the repository root:
+
+```bash
+uv run python -m src.gpt2_attention
+```
+
+`src/data.py` samples 32 passages with seed 42, keeps passages with at least 32
+tokens, and caps each at 128 tokens. These settings are constants at the top of
+that file. `src/gpt2_attention.py` loads the weights once and runs each passage on
+CPU with two threads.
+
+Each passage is saved to `data/attention/passage_<line>.pt`, where `<line>` is its
+1-based line number in `passages.txt`. Each file contains the source text, token
+IDs, original token count, truncation flag, model name and revision, and an
+`attention` tensor shaped `[12, 12, tokens, tokens]`: layer, head, query, key.
+The source text is the full passage; the token IDs and attention use its capped
+input. Repeating a run overwrites files for the same passage lines.
+
+To read one saved passage:
+
+```python
+from pathlib import Path
+import torch
+
+path = next(Path("data/attention").glob("*.pt"))
+sample = torch.load(path, weights_only=True)
+print(sample["token_ids"])
+print(sample["attention"].shape)
+# First layer, first head; rows are queries and columns are attended tokens.
+head_attention = sample["attention"][0, 0]
+```
+
 ## Submission
 
 Submit your code and report in the form of a GitHub repository. Send the repository URL to Ak via Slack. The code should reproduce the measurements and figures in the report. The report should include your experimental setup, results, figures, discussion, limitations, references, and a brief statement describing each partner's contributions.
