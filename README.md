@@ -89,6 +89,45 @@ print(sample["attention"].shape)
 head_attention = sample["attention"][0, 0]
 ```
 
+## Plotting attention
+
+After generating the attention files, run:
+
+```bash
+uv run python -m src.plot_attention
+```
+
+This generates **24 PNGs** at 100 DPI (1200 by 3000 pixels): passages 485 and 670,
+each with one image per layer. Every image contains all 12 heads in **6 rows and
+2 columns**, ordered left to right and top to bottom. Files are named
+`figures/head_comparison/passage_0485/layer_01.png` through `layer_12.png`, with
+another 12 files under `passage_0670/`. Repeating a run overwrites the same files.
+The title shows only the layer number (for example, `Layer 1`); there is no footer.
+Layer and head titles use Computer Modern Roman Bold (`cmb10`, bundled with
+Matplotlib).
+
+Change the constants at the top of `src/plot_attention.py`; there are no command
+line options:
+
+- `PASSAGES`: pairs of passage line number and prefix token count.
+- `LAYERS`: layer numbers to plot, starting at 1.
+- `ROWS`, `COLS`: grid layout; their product must equal 12. For example, set
+  `ROWS = 3` and `COLS = 4` for three rows of four heads.
+- `FIGSIZE`: figure width and height in inches; adjust alongside the layout
+  (for example, `(24, 18)` for a 3-by-4 grid).
+- `DPI`: output resolution; 100 for previews, or 200 for larger images.
+- `LINE_COLOR`: attention line color; defaults to pure blue (`#0000FF`).
+- `TITLE_FONT`: font family for layer and head titles.
+- `OUTPUT`: output directory.
+
+Each panel shows query tokens on the left and attended tokens on the right.
+All nonzero weights are drawn, with line opacity equal to the weight. Labels
+retain GPT-2's token splits, with `·` indicating a space.
+
+Passage lines refer to `data/passages.txt`. The default prefixes end at complete
+sentences and keep all their original past context. The script uses the saved
+attention directly, without rerunning GPT-2 or renormalizing the weights.
+
 ## Submission
 
 Submit your code and report in the form of a GitHub repository. Send the repository URL to Ak via Slack. The code should reproduce the measurements and figures in the report. The report should include your experimental setup, results, figures, discussion, limitations, references, and a brief statement describing each partner's contributions.
